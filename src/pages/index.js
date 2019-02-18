@@ -1,70 +1,93 @@
-import React, { Component } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { graphql } from 'gatsby'
-import { uniq } from 'lodash'
+import _ from 'lodash'
 
 import { Layout } from '../layout'
 import { Bio } from '../components/bio'
 import { Head } from '../components/head'
 import { Category } from '../components/category'
-import Home from '../templates/home'
+import { Contents } from '../components/contents'
 
+import * as ScrollManager from '../utils/scroll'
+import * as Storage from '../utils/storage'
+import * as IOManager from '../utils/visible'
+import * as EventManager from '../utils/event-manager'
 import * as Dom from '../utils/dom'
-import { SCROLL_Y, HOME_TITLE, CATEGORY_TYPE } from '../constants'
 
-export default class BlogIndex extends Component {
-  constructor(props) {
-    super(props)
-    this.state = {
-      currentCategory: CATEGORY_TYPE.ALL,
+import { HOME_TITLE, CATEGORY_TYPE } from '../constants'
+
+const DEST_POS = 360
+const BASE_LINE = 80
+
+function getDistance(currentPos) {
+  return Dom.getDocumentHeight() - currentPos
+}
+
+export default ({ data, location }) => {
+  const initialCount = Storage.getCount(1)
+  const initialCategory = Storage.getCategory(CATEGORY_TYPE.ALL)
+  const [count, setCount] = useState(initialCount)
+  const countRef = useRef(count)
+  const [category, setCategory] = useState(initialCategory)
+
+  const { siteMetadata } = data.site
+  const { countOfInitialPost } = siteMetadata.configs
+  const posts = data.allMarkdownRemark.edges
+  const categories = _.uniq(posts.map(({ node }) => node.frontmatter.category))
+
+  useEffect(() => {
+    window.addEventListener(`scroll`, onScroll, { passive: false })
+    IOManager.init()
+    ScrollManager.init()
+
+    return () => {
+      window.removeEventListener(`scroll`, onScroll, { passive: false })
+      IOManager.destroy()
+      ScrollManager.destroy()
     }
-    this.selectCategory = this.selectCategory.bind(this)
+  }, [])
+
+  useEffect(() => {
+    countRef.current = count
+    IOManager.refreshObserver()
+    Storage.setCount(count)
+    Storage.setCategory(category)
+  })
+
+  const selectCategory = category => {
+    setCategory(category)
+    ScrollManager.go(DEST_POS)
   }
 
-  componentDidMount() {
-    this.categoryPosition = Dom.getElementPosition('#category')(SCROLL_Y)
+  const onScroll = () => {
+    const currentPos = window.scrollY + window.innerHeight
+    const isTriggerPos = () => getDistance(currentPos) < BASE_LINE
+    const doesNeedMore = () =>
+      posts.length > countRef.current * countOfInitialPost
+
+    return EventManager.toFit(() => setCount(prev => prev + 1), {
+      dismissCondition: () => !isTriggerPos(),
+      triggerCondition: () => isTriggerPos() && doesNeedMore(),
+    })()
   }
 
-  selectCategory(e, item) {
-    e.preventDefault()
-
-    if (window.scrollY > this.categoryPosition) {
-      window.scrollTo(0, this.categoryPosition)
-    }
-
-    this.setState(prevState => {
-      return (
-        prevState.currentCategory !== item && {
-          currentCategory: item,
-        }
-      )
-    })
-  }
-
-  render() {
-    const { currentCategory } = this.state
-    const { data } = this.props
-    const { siteMetadata } = data.site
-    const { countOfInitialPost } = siteMetadata.configs
-    const posts = data.allMarkdownRemark.edges
-    const category = uniq(posts.map(({ node }) => node.frontmatter.category))
-
-    return (
-      <Layout location={this.props.location} title={siteMetadata.title}>
-        <Head title={HOME_TITLE} keywords={siteMetadata.keywords} />
-        <Bio />
-        <Category
-          category={category}
-          currentCategory={currentCategory}
-          selectCategory={this.selectCategory}
-        />
-        <Home
-          currentCategory={currentCategory}
-          countOfInitialPost={countOfInitialPost}
-          posts={posts}
-        />
-      </Layout>
-    )
-  }
+  return (
+    <Layout location={location} title={siteMetadata.title}>
+      <Head title={HOME_TITLE} keywords={siteMetadata.keywords} />
+      <Bio />
+      <Category
+        categories={categories}
+        category={category}
+        selectCategory={selectCategory}
+      />
+      <Contents
+        posts={posts}
+        countOfInitialPost={countOfInitialPost}
+        count={count}
+        category={category}
+      />
+    </Layout>
+  )
 }
 
 export const pageQuery = graphql`
